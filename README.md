@@ -2,21 +2,21 @@
 
 MCATrack is a PyTorch-based implementation of a robust object tracking model, specifically optimized for UAV (Unmanned Aerial Vehicle) tracking in complex environments. It leverages both **Appearance (Grayscale)** and **Temporal Motion (Magno-Motion)** features through a custom 2-channel ResNet backbone and a Dynamic Target Cross Guidance (DTCG) module.
 
-## ✨ Key Features & Architecture
+## Key Features & Architecture
 
 This repository implements the core tracking pipeline, breaking down the tracking problem into three main components:
 
-### 1. Magno-Motion Module 🧠
+### 1. Magno-Motion Module 
 Inspired by the magnocellular pathway in the human visual system, this module captures temporal motion while suppressing camera ego-motion.
 * **Camera Ego-Motion Compensation:** Uses **ORB (Oriented FAST and Rotated BRIEF)** feature matching to calculate the Affine Transformation matrix between frames. If feature points are insufficient (e.g., clear sky backgrounds), it softly falls back to Phase Correlation.
 * **Motion Map Generation:** Calculates the absolute difference between the aligned past frame and the current frame, integrating it with the historical memory map using an exponential moving average ($\alpha$).
 
-### 2. 2-Channel Backbone 🧬
+### 2. 2-Channel Backbone 
 A modified `ResNet50` architecture. The first convolutional layer (`conv1`) is customized to accept a **2-channel tensor** `[1, 2, H, W]`:
 * **Channel 1:** Raw Appearance (Grayscale Image)
 * **Channel 2:** Motion Map (Output from Magno-Motion Module)
 
-### 3. DTCG (Dynamic Target Cross Guidance) 🎯
+### 3. DTCG (Dynamic Target Cross Guidance) 
 A Cross-Attention mechanism that solves the template drifting problem. It fuses three distinct feature maps:
 * **Initial Template ($Z_0$):** The pure, unchanging target from the first frame.
 * **Dynamic Template ($Z_t$):** The recently updated appearance and motion of the target.
@@ -25,7 +25,7 @@ A Cross-Attention mechanism that solves the template drifting problem. It fuses 
 
 ---
 
-## 🔍 Special Feature: ORB Motion Compensation Visualization
+## Special Feature: ORB Motion Compensation Visualization
 
 UAV tracking datasets often suffer from severe camera shake. To ensure the generated "Motion Map" only reflects the UAV's movement (and not the camera's panning), the `Magno_Motion` module dynamically aligns the past frame to the current frame.
 
@@ -34,7 +34,7 @@ To better understand this process, I've included a standalone visualization scri
 
 ---
 
-## 📁 Repository Structure
+## Repository Structure
 
 
 
