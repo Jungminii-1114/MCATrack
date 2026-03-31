@@ -1,4 +1,4 @@
-# 🚁 MCATrack (Memory-based Cross-Attention Tracker)
+# 🚁 MCATrack (Memory-based Cross-Attention Tracker) (In-Progress ...)
 
 MCATrack is a PyTorch-based implementation of a robust object tracking model, specifically optimized for UAV (Unmanned Aerial Vehicle) tracking in complex environments. It leverages both **Appearance (Grayscale)** and **Temporal Motion (Magno-Motion)** features through a custom 2-channel ResNet backbone and a Dynamic Target Cross Guidance (DTCG) module.
 
