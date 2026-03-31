@@ -35,3 +35,10 @@ To better understand this process, I've included a standalone visualization scri
 ---
 
 ## 📁 Repository Structure
+
+
+
+## References
+* Paper : *"Tracking Tiny Drones against Clutter: Large-Scale Infrared Benchmark with Motion-Centric Adaptive Algorithm"* (Paper Link)[https://openaccess.thecvf.com/content/ICCV2025/papers/Zhang_Tracking_Tiny_Drones_against_Clutter_Large-Scale_Infrared_Benchmark_with_Motion-Centric_ICCV_2025_paper.pdf]
+
+## Appendix
