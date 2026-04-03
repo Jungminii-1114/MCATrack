@@ -90,23 +90,36 @@ class AntiUAVDataset(Dataset):
             return self.__getitem__((idx + 1) % len(self.video_seqs))
 
         init_idx = valid_indices[0]
-        search_valid_indices = [i for i in valid_indices if i > init_idx]
-
-        if not search_valid_indices:
+        if init_idx + 1 >= len(img_paths):
             return self.__getitem__((idx + 1) % len(self.video_seqs))
 
-        search_idx = random.choice(search_valid_indices)
-        prev_idx = search_idx - 1
+        if exists[init_idx + 1] != 1:
+            return self.__getitem__((idx + 1) % len(self.video_seqs))
+
+        search_idx = init_idx + 1
+        prev_idx = init_idx
+        # search idx가 멀리 떨어진 프레임이면 train_track이 기대하는 직전 프레임 기반 상태랑 실제가 어긋나버림.
+
+
+        # search_valid_indices = [i for i in valid_indices if i > init_idx]
+
+        # if not search_valid_indices:
+        #     return self.__getitem__((idx + 1) % len(self.video_seqs))
+
+        # search_idx = random.choice(search_valid_indices)
+        # prev_idx = search_idx - 1
+
+        prev_bbox = torch.tensor(gt_rects[prev_idx], dtype=torch.float32)
 
         init_frame = cv2.imread(img_paths[init_idx])
         prev_frame = cv2.imread(img_paths[prev_idx])
         search_frame = cv2.imread(img_paths[search_idx])
 
-        target_sz = (255, 255)
+        # target_sz = (255, 255)
 
-        init_frame=cv2.resize(init_frame, target_sz)
-        prev_frame=cv2.resize(prev_frame, target_sz)
-        search_frame=cv2.resize(search_frame, target_sz)
+        # init_frame=cv2.resize(init_frame, target_sz)
+        # prev_frame=cv2.resize(prev_frame, target_sz)
+        # search_frame=cv2.resize(search_frame, target_sz)
 
         init_bbox = torch.tensor(gt_rects[init_idx], dtype=torch.float32)
         search_bbox = torch.tensor(gt_rects[search_idx], dtype=torch.float32)
@@ -115,6 +128,7 @@ class AntiUAVDataset(Dataset):
             'video_name': seq["video_name"],
             'init_frame': init_frame,
             'init_bbox': init_bbox,
+            'prev_bbox' : prev_bbox,
             'prev_frame': prev_frame,
             'search_frame': search_frame,
             'search_gt_bbox': search_bbox
@@ -133,6 +147,28 @@ def cxcywh_to_xyxy(boxes):
     x2 = cx + 0.5 * w
     y2 = cy + 0.5 * h
     return torch.stack((x1, y1, x2, y2), dim=-1)
+
+def map_bbox_to_search_crop(gt_bbox, ref_bbox, output_size=255, context=0.5):
+    ref_x, ref_y, ref_w, ref_h = ref_bbox
+    ref_cx = ref_x + ref_w / 2.0
+    ref_cy = ref_y + ref_h / 2.0
+
+    p = (ref_w + ref_h) / 2.0 * context
+    sz = float(np.sqrt(max(0.0, (ref_w + p) * (ref_h + p))))
+
+    crop_x1 = ref_cx - sz / 2.0
+    crop_y1 = ref_cy - sz / 2.0
+    scale = output_size / sz
+
+    gt_x, gt_y, gt_w, gt_h = gt_bbox
+
+    gt_x_crop = (gt_x - crop_x1) * scale
+    gt_y_crop = (gt_y - crop_y1) * scale
+    gt_w_crop = gt_w * scale
+    gt_h_crop = gt_h * scale
+
+    return torch.tensor([gt_x_crop, gt_y_crop, gt_w_crop, gt_h_crop], dtype=torch.float32)
+
 
 def compute_loss(class_scores, pred_deltas, base_anchors, gt_bbox, device):
     """
@@ -231,13 +267,16 @@ def train_and_val(model, train_loader, val_loader, epochs, device, project_name=
 
             init_frame = batch['init_frame'][0].numpy()
             init_bbox = batch['init_bbox'][0].numpy()
+            prev_bbox = batch['prev_bbox'][0].numpy()
             search_frame = batch['search_frame'][0].numpy()
-            gt_bbox = batch['search_gt_bbox'][0].to(device)
+            gt_bbox = batch['search_gt_bbox'][0].numpy()
 
             model.init(init_frame, init_bbox)
-            cls_scores, reg_deltas, base_anchors = model.train_track(search_frame, init_bbox)
+            cls_scores, reg_deltas, base_anchors = model.train_track(search_frame, prev_bbox)
 
-            loss, l_cls, l_reg = compute_loss(cls_scores, reg_deltas, base_anchors, gt_bbox, device)
+            gt_bbox_crop = map_bbox_to_search_crop(gt_bbox, prev_bbox).to(device)
+
+            loss, l_cls, l_reg = compute_loss(cls_scores, reg_deltas, base_anchors, gt_bbox_crop, device)
 
             if torch.isinf(loss) or torch.isnan(loss):
                 print(f"INF Loss Found -> skipping..{loss.item()}")
@@ -305,88 +344,6 @@ val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=2)
 
 print(f"Train 비디오 개수: {len(train_dataset)}")
 print(f"Val 비디오 개수: {len(val_dataset)}")
-
-from torchvision.ops import box_iou
-
-def cxcywh_to_xyxy(boxes):
-    """
-    (center_x, center_y, width, height) -> (x1, y1, x2, y2) 변환
-    boxes: [N, 4] 텐서
-    """
-    cx, cy, w, h = boxes.unbind(-1)
-    x1 = cx - 0.5 * w
-    y1 = cy - 0.5 * h
-    x2 = cx + 0.5 * w
-    y2 = cy + 0.5 * h
-    return torch.stack((x1, y1, x2, y2), dim=-1)
-
-def compute_loss(class_scores, pred_deltas, base_anchors, gt_bbox, device):
-    """
-    class_scores: [1, 2028, 2] (모델이 예측한 분류 점수)
-    pred_deltas:  [1, 2028, 4] (모델이 예측한 좌표 델타)
-    base_anchors: [2028, 4] (고정된 기본 앵커 cx, cy, w, h)
-    gt_bbox:      [4] (정답 박스 x_left, y_top, w, h) - Anti-UAV 데이터셋 기준
-    """
-    # 1. 차원 맞추기 (Batch 차원 제거)
-    class_scores = class_scores.squeeze(0) # [2028, 2]
-    pred_deltas = pred_deltas.squeeze(0)   # [2028, 4]
-
-    # 2. GT Box 형태 변환: [x_left, y_top, w, h] -> [cx, cy, w, h]
-    gt_x, gt_y, gt_w, gt_h = gt_bbox
-    gt_cx = gt_x + gt_w / 2.0
-    gt_cy = gt_y + gt_h / 2.0
-    gt_cxcywh = torch.tensor([[gt_cx, gt_cy, gt_w, gt_h]], dtype=torch.float32, device=device)
-
-    # 3. IoU 계산을 위해 양쪽 모두 [x1, y1, x2, y2] 형태로 변환
-    anchors_xyxy = cxcywh_to_xyxy(base_anchors)
-    gt_xyxy = cxcywh_to_xyxy(gt_cxcywh)
-
-    # [2028, 1] 크기의 IoU 텐서가 나옵니다.
-    ious = box_iou(anchors_xyxy, gt_xyxy).squeeze(1)
-
-    # 4. Target Assignment (라벨링)
-    # 기본적으로 모두 -1 (Ignore)로 초기화
-    labels = torch.full((2028,), -1, dtype=torch.long, device=device)
-
-    # IoU < 0.3 이면 배경(0)
-    labels[ious < 0.3] = 0
-    # IoU >= 0.6 이면 진짜 객체(1)
-    labels[ious >= 0.6] = 1
-
-    # 만약 0.6을 넘는 앵커가 하나도 없다면? 가장 IoU가 높은 녀석 하나라도 1로 만들어줍니다! (안전 장치)
-    if (labels == 1).sum() == 0:
-        max_iou_idx = torch.argmax(ious)
-        labels[max_iou_idx] = 1
-
-    # 5. Regression Target 계산 (Encoding) - 역 디코딩 공식
-    anchor_cx, anchor_cy, anchor_w, anchor_h = base_anchors.unbind(dim=1)
-
-    # log 안이 음수가 되는 것을 막기 위해 클리핑 (아주 작은 값 더하기)
-    eps = 1e-6
-    target_dx = (gt_cx - anchor_cx) / anchor_w
-    target_dy = (gt_cy - anchor_cy) / anchor_h
-    target_dw = torch.log(gt_w / (anchor_w + eps))
-    target_dh = torch.log(gt_h / (anchor_h + eps))
-
-    target_deltas = torch.stack([target_dx, target_dy, target_dw, target_dh], dim=1) # [2028, 4]
-
-    # 6. 대망의 Loss 계산!
-    # 분류 Loss (Ignore인 -1은 무시하고 계산하도록 ignore_index=-1 설정)
-    criterion_cls = nn.CrossEntropyLoss(ignore_index=-1)
-    loss_cls = criterion_cls(class_scores, labels)
-
-    # 회귀 Loss (라벨이 1인 진짜 앵커들에 대해서만 좌표 오차를 계산!)
-    pos_indices = (labels == 1)
-    if pos_indices.sum() > 0:
-        criterion_reg = nn.SmoothL1Loss()
-        loss_reg = criterion_reg(pred_deltas[pos_indices], target_deltas[pos_indices])
-    else:
-        loss_reg = torch.tensor(0.0, device=device, requires_grad=True)
-
-    # 분류와 회귀 Loss를 더함 (회귀 쪽에 가중치를 주는 경우도 많습니다)
-    total_loss = loss_cls + (1.0 * loss_reg)
-
-    return total_loss, loss_cls, loss_reg
 
 # 1. 디바이스 설정
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -499,5 +456,5 @@ except Exception as e:
 # 4. 생성된 영상 파일 리스트 확인
 result_files = os.listdir('/content/test_results')
 print(f"📁 생성된 영상 개수: {len(result_files)}개")
-for f in result_files[:5]: # 상위 5개만 출력
+for f in result_files[2:4]: # 상위 5개만 출력
     print(f" - {f}")
